@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>派工门禁 - 山火事件指挥与离线人员调度</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#17212b}
+section{border:1px solid #d8e0e6;border-radius:8px;padding:1rem;margin:1rem 0}
+h1{font-size:1.4rem}h2{font-size:1.05rem;margin:0 0 .6rem}
+input,select{padding:.4rem;margin:.2rem .3rem .2rem 0}
+button{padding:.5rem 1rem}
+pre{background:#f4f7f9;padding:.8rem;overflow:auto;white-space:pre-wrap}
+.hold{color:#a02a2a}.ok{color:#1d6b2a}
+</style>
+</head>
+<body>
+<h1>夜班轮换派工门禁</h1>
+<p>到场、离场都记时刻；同一队员重复到场沿用首次结果。连续作业超过8小时或休息不足2小时的队员只进待休整，并说明超限时长与可派工时；迟到补录会重新判定待派记录，现场记录保留可查。</p>
+<p>
+操作员 <input id="actor" value="dispatcher">
+角色 <select id="role">
+<option value="logistics">logistics</option>
+<option value="field_commander">field_commander</option>
+<option value="incident_commander">incident_commander</option>
+<option value="viewer">viewer</option>
+</select>
+</p>
+
+<section>
+<h2>1. 到场 / 离场登记</h2>
+<input id="attMember" placeholder="队员姓名">
+<select id="attKind"><option value="arrival">到场</option><option value="departure">离场</option></select>
+<input id="attAt" type="datetime-local" step="60"> 时刻按UTC，留空取当前；迟到补录填实际时刻
+<button onclick="recordAttendance()">登记</button>
+<pre id="attOut">-</pre>
+</section>
+
+<section>
+<h2>2. 新派工</h2>
+<input id="disMember" placeholder="队员姓名">
+<input id="disItem" placeholder="任务区ID(可选)" size="12">
+<button onclick="createDispatch()">派工判定</button>
+<pre id="disOut">-</pre>
+</section>
+
+<section>
+<h2>3. 疲劳预判</h2>
+<input id="fatMember" placeholder="队员姓名">
+<button onclick="checkFatigue()">查询</button>
+<pre id="fatOut">-</pre>
+</section>
+
+<section>
+<h2>4. 现场记录</h2>
+<button onclick="loadAttendance()">刷新</button>
+<pre id="attList">-</pre>
+</section>
+
+<section>
+<h2>5. 派工留档</h2>
+<button onclick="loadDispatches()">刷新</button>
+<pre id="disList">-</pre>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+function headers(){return {'Content-Type':'application/json','X-Actor':$('actor').value,'X-Role':$('role').value}}
+async function show(id,r){$(id).textContent=JSON.stringify(await r.json(),null,2)}
+function kindText(k){return k==='arrival'?'到场':'离场'}
+function statusText(s){return s==='assigned'?'已派工':'待休整'}
+function evalText(e){
+  if(!e)return'';
+  const parts=[`连续作业${e.work_hours}小时`,`休息${e.rest_hours===null?'-':e.rest_hours+'小时'}`];
+  if(e.reasons&&e.reasons.length)parts.push('超限：'+e.reasons.map(r=>r.message).join('；'));
+  if(e.available_at)parts.push('可派工时：'+e.available_at);
+  if(e.note)parts.push(e.note);
+  return parts.join('；');
+}
+async function recordAttendance(){
+  const body={member:$('attMember').value,kind:$('attKind').value};
+  if($('attAt').value)body.happened_at=$('attAt').value;
+  const r=await fetch('/api/attendance',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+  await show('attOut',r);loadAttendance();loadDispatches();
+}
+async function createDispatch(){
+  const body={member:$('disMember').value};
+  if($('disItem').value)body.item_id=parseInt($('disItem').value,10);
+  const r=await fetch('/api/dispatches',{method:'POST',headers:headers(),body:JSON.stringify(body)});
+  await show('disOut',r);loadDispatches();
+}
+async function checkFatigue(){
+  const r=await fetch('/api/fatigue?member='+encodeURIComponent($('fatMember').value),{headers:headers()});
+  await show('fatOut',r);
+}
+async function loadAttendance(){
+  const r=await fetch('/api/attendance',{headers:headers()});
+  const data=await r.json();
+  $('attList').textContent=(data.attendance||[]).map(a=>`#${a.id} ${a.member} ${kindText(a.kind)} ${a.happened_at}${a.backfill?' [迟到补录]':''} 登记:${a.created_by}`).join('\n')||'暂无记录';
+}
+async function loadDispatches(){
+  const r=await fetch('/api/dispatches',{headers:headers()});
+  const data=await r.json();
+  $('disList').textContent=(data.dispatches||[]).map(d=>`#${d.id} ${d.member} [${statusText(d.status)}] 申请:${d.requested_at}${d.item_id?' 任务区:'+d.item_id:''}\n  ${evalText(d.evaluation)}`).join('\n')||'暂无记录';
+}
+loadAttendance();loadDispatches();
+</script>
+</body>
+</html>

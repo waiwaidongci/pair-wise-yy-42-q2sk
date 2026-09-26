@@ -11,7 +11,7 @@ from .domain import (ConflictError, DomainError, NotFoundError, PermissionDenied
 from .service import Service
 
 
-def make_handler(service: Service, static_dir: str):
+def make_handler(service: Service, static_dir: str, dispatch=None):
     root = Path(static_dir)
 
     class Handler(BaseHTTPRequestHandler):
@@ -98,6 +98,31 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"events": service.audit(role)})
+                elif path == "/dispatch":
+                    self._html(root / "dispatch.html")
+                elif path in ("/api/attendance", "/api/dispatches",
+                              "/api/fatigue") and dispatch is None:
+                    self._json(404, {"error": "not_found"})
+                elif path == "/api/attendance":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(200, {"attendance": dispatch.list_attendance(
+                        query.get("member", [None])[0], role)})
+                elif path == "/api/dispatches":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(200, {"dispatches": dispatch.list_dispatches(
+                        role, member=query.get("member", [None])[0],
+                        status=query.get("status", [None])[0])})
+                elif path == "/api/fatigue":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    self._json(200, dispatch.fatigue_preview(
+                        query.get("member", [None])[0],
+                        query.get("at", [None])[0], role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -119,6 +144,13 @@ def make_handler(service: Service, static_dir: str):
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
                         item_id, target, expected, actor, role))
+                elif path in ("/api/attendance", "/api/dispatches") and dispatch is None:
+                    self._json(404, {"error": "not_found"})
+                elif path == "/api/attendance":
+                    result = dispatch.record_attendance(body, actor, role)
+                    self._json(200 if result["reused"] else 201, result)
+                elif path == "/api/dispatches":
+                    self._json(201, dispatch.create_dispatch(body, actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
