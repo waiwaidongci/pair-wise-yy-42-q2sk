@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from .domain import ensure_role, normalize_severity, require_number, require_text
+from .dispatch import DispatchService
 from .repository import Repository
 from .rules import (AUDIT_ROLES, CREATE_ROLES, ENTITY, RECORD_ROLES, TITLE,
                     VIEW_ROLES, completion_blockers, escalation_required,
@@ -11,8 +12,9 @@ from .rules import (AUDIT_ROLES, CREATE_ROLES, ENTITY, RECORD_ROLES, TITLE,
 
 
 class Service:
-    def __init__(self, repository: Repository):
+    def __init__(self, repository: Repository, clock=None):
         self.repository = repository
+        self.dispatch = DispatchService(repository, clock=clock)
 
     def _view(self, role: str) -> None:
         ensure_role(role, VIEW_ROLES)

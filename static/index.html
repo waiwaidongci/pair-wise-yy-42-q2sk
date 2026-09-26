@@ -1,1 +1,128 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>山火事件指挥与离线人员调度</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:900px;margin:2rem auto;padding:0 1rem;color:#17212b}pre{background:#f4f7f9;padding:1rem;overflow:auto}button{padding:.55rem 1rem}</style></head><body><h1>山火事件指挥与离线人员调度</h1><p>维护火线、风向、资源和任务区，合并离线现场记录并防止人员重复分配</p><p>火线长度、风向变化和离线记录数量影响风险等级；同一资源不能同时出现在多个活动任务中。</p><button onclick="loadItems()">刷新列表</button><pre id="out">使用X-Actor和X-Role请求头调用接口。</pre><script>async function loadItems(){const r=await fetch('/api/items',{headers:{'X-Actor':'demo','X-Role':'viewer'}});document.getElementById('out').textContent=JSON.stringify(await r.json(),null,2)}</script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>山火夜班派工门禁</title>
+<style>
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;max-width:1000px;margin:1.5rem auto;padding:0 1rem;color:#17212b;background:#fafbfc}
+h1{font-size:1.4rem} h2{font-size:1.05rem;margin-top:1.6rem;border-left:4px solid #c0392b;padding-left:.5rem}
+.card{background:#fff;border:1px solid #e3e8ee;border-radius:8px;padding:1rem;margin:.8rem 0}
+label{display:inline-block;font-size:.85rem;margin:.3rem .4rem .3rem 0}
+input,select{padding:.4rem;border:1px solid #c7d0d9;border-radius:4px;font-size:.85rem}
+button{padding:.45rem .9rem;border:0;border-radius:4px;background:#c0392b;color:#fff;cursor:pointer;font-size:.85rem;margin:.2rem .3rem .2rem 0}
+button.secondary{background:#51606e} button.light{background:#eef1f4;color:#17212b;border:1px solid #c7d0d9}
+pre{background:#1e262f;color:#e6edf3;padding:.8rem;border-radius:6px;overflow:auto;font-size:.78rem;min-height:3rem}
+table{border-collapse:collapse;width:100%;font-size:.8rem} td,th{border:1px solid #e3e8ee;padding:.35rem .5rem;text-align:left}
+.held{color:#c0392b;font-weight:600}.assigned{color:#1e7e34;font-weight:600}
+.row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
+small{color:#667}
+</style>
+</head>
+<body>
+<h1>山火夜班派工门禁</h1>
+<p><small>到场和离场均记录时刻；连续作业超过8小时或离场后休息不足2小时，只进待休整。同一队员重复到场沿用首次结果；迟到补录后待派记录自动重新判定。</small></p>
+
+<div class="card">
+  <strong>身份</strong>
+  <label>X-Actor <input id="actor" value="dispatcher" size="10"></label>
+  <label>X-Role
+    <select id="role">
+      <option value="logistics" selected>logistics（调度）</option>
+      <option value="field_commander">field_commander（现场指挥）</option>
+      <option value="incident_commander">incident_commander</option>
+      <option value="viewer">viewer</option>
+    </select>
+  </label>
+</div>
+
+<h2>① 到场 / 离场 / 迟到补录</h2>
+<div class="card">
+  <div class="row">
+    <label>队员编号 <input id="mcode" value="M-001" size="9"></label>
+    <label>姓名 <input id="mname" value="张大山" size="9"></label>
+    <label>任务区ID <input id="aitem" placeholder="如 1" size="6"></label>
+  </div>
+  <div class="row">
+    <label>到场时刻 <input id="arrival" placeholder="留空=现在" size="22"></label>
+    <label>离场时刻 <input id="depart" placeholder="留空=现在" size="22"></label>
+  </div>
+  <button onclick="checkIn()">到场登记</button>
+  <button onclick="checkOut()">离场登记</button>
+  <button class="secondary" onclick="backfill()">迟到补录（到场+离场）</button>
+</div>
+<pre id="attOut">尚未操作。</pre>
+
+<h2>② 新派工（按最近一次离场计算）</h2>
+<div class="card">
+  <div class="row">
+    <label>队员编号 <input id="dcode" value="M-001" size="9"></label>
+    <label>任务区ID <input id="ditem" placeholder="必填" size="6"></label>
+    <label>派工时刻 <input id="dat" placeholder="留空=现在" size="22"></label>
+    <button onclick="dispatch()">派工判定</button>
+    <button class="light" onclick="memberStatus()">查看门禁状态</button>
+  </div>
+</div>
+<pre id="dispOut">尚未派工。</pre>
+
+<h2>③ 留档查询（现场记录始终可查）</h2>
+<div class="card">
+  <button class="secondary" onclick="loadAttendance()">现场记录</button>
+  <button class="secondary" onclick="loadDispatches()">派工留档</button>
+  <button class="light" onclick="loadHeld()">只看待休整</button>
+  <div style="margin-top:.5rem" id="lists"></div>
+</div>
+
+<script>
+function headers(){return {'X-Actor':document.getElementById('actor').value,'X-Role':document.getElementById('role').value,'Content-Type':'application/json'}}
+function val(id){const v=document.getElementById(id).value.trim();return v?v:null}
+function num(id){const v=val(id);return v?Number(v):null}
+function show(id,data){document.getElementById(id).textContent=JSON.stringify(data,null,2)}
+async function post(url,payload){
+  const r=await fetch(url,{method:'POST',headers:headers(),body:JSON.stringify(payload)});
+  return {status:r.status,data:await r.json()}
+}
+async function checkIn(){
+  const {status,data}=await post('/api/attendance/check-in',
+    {member_code:val('mcode'),member_name:val('mname'),item_id:num('aitem'),arrival_at:val('arrival')});
+  show('attOut',{http:status,data})
+}
+async function checkOut(){
+  const {status,data}=await post('/api/attendance/check-out',
+    {member_code:val('mcode'),depart_at:val('depart')});
+  show('attOut',{http:status,data})
+}
+async function backfill(){
+  const {status,data}=await post('/api/attendance/backfill',
+    {member_code:val('mcode'),member_name:val('mname'),item_id:num('aitem'),arrival_at:val('arrival'),depart_at:val('depart')});
+  show('attOut',{http:status,data});
+  if(data.reevaluated&&data.reevaluated.length)loadDispatches()
+}
+async function dispatch(){
+  const {status,data}=await post('/api/dispatches',
+    {member_code:val('dcode'),item_id:num('ditem'),at:val('dat')});
+  show('dispOut',{http:status,data})
+}
+async function memberStatus(){
+  const code=encodeURIComponent(val('dcode'));
+  const r=await fetch('/api/members/'+code+'/status',{headers:headers()});
+  show('dispOut',await r.json())
+}
+function esc(s){return String(s??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}
+async function loadAttendance(){
+  const r=await fetch('/api/attendance',{headers:headers()});const j=await r.json();
+  const rows=(j.attendance||[]).map(a=>`<tr><td>${a.id}</td><td>${esc(a.member_code)}</td><td>${esc(a.member_name)}</td><td>${esc(a.item_id)}</td><td>${esc(a.arrival_at)}</td><td>${esc(a.depart_at)||'— 在场 —'}</td><td>${a.source}</td></tr>`).join('');
+  document.getElementById('lists').innerHTML='<table><tr><th>ID</th><th>队员</th><th>姓名</th><th>任务区</th><th>到场</th><th>离场</th><th>来源</th></tr>'+rows+'</table>'
+}
+async function loadDispatches(extra){
+  const r=await fetch('/api/dispatches'+(extra||''),{headers:headers()});const j=await r.json();
+  const rows=(j.dispatches||[]).map(d=>{
+    const g=d.gate_detail||{};
+    return `<tr><td>${d.id}</td><td>${esc(d.member_code)}</td><td>${d.item_id}</td><td class="${d.status}">${d.status==='held'?'待休整':'已派入'}${d.reevaluated?'（补录后改判）':''}</td><td>${esc(d.requested_at)}</td><td>${esc(g.continuous_hours)}</td><td>${esc(g.rest_hours)}</td><td>${esc(g.overtime_hours)}</td><td>${esc(g.available_hours)}</td><td>${esc(g.eligible_at||'')}</td><td>${esc((g.reasons||[]).join('；'))}</td></tr>`
+  }).join('');
+  document.getElementById('lists').innerHTML='<table><tr><th>ID</th><th>队员</th><th>任务区</th><th>结果</th><th>派工时刻</th><th>连续工时</th><th>已休息</th><th>超限时长</th><th>可派工时</th><th>可派时刻</th><th>说明</th></tr>'+rows+'</table>'
+}
+function loadHeld(){loadDispatches('?status=held')}
+</script>
+</body>
+</html>

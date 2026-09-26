@@ -98,6 +98,26 @@ def make_handler(service: Service, static_dir: str):
                     actor, role = self._identity()
                     del actor
                     self._json(200, {"events": service.audit(role)})
+                elif path == "/api/attendance":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    member_code = query.get("member_code", [None])[0]
+                    self._json(200, {"attendance": service.dispatch.list_attendance(
+                        member_code, role)})
+                elif path == "/api/dispatches":
+                    actor, role = self._identity()
+                    del actor
+                    query = parse_qs(urlparse(self.path).query)
+                    member_code = query.get("member_code", [None])[0]
+                    status = query.get("status", [None])[0]
+                    self._json(200, {"dispatches": service.dispatch.list_dispatches(
+                        member_code, status, role)})
+                elif path.startswith("/api/members/") and path.endswith("/status"):
+                    member_code = path.split("/")[3]
+                    actor, role = self._identity()
+                    del actor
+                    self._json(200, service.dispatch.member_status(member_code, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
@@ -119,6 +139,16 @@ def make_handler(service: Service, static_dir: str):
                     expected = body.get("expected_version")
                     self._json(200, service.transition(
                         item_id, target, expected, actor, role))
+                elif path == "/api/attendance/check-in":
+                    self._json(201, service.dispatch.check_in(body, actor, role))
+                elif path == "/api/attendance/check-out":
+                    self._json(200, service.dispatch.check_out(body, actor, role))
+                elif path == "/api/attendance/backfill":
+                    self._json(201, service.dispatch.backfill_attendance(
+                        body, actor, role))
+                elif path == "/api/dispatches":
+                    self._json(201, service.dispatch.create_dispatch(
+                        body, actor, role))
                 else:
                     self._json(404, {"error": "not_found"})
             except Exception as exc:
